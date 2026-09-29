@@ -1,0 +1,125 @@
+version: "3.9"
+
+# ── Argos — VPS Control Plane ─────────────────────────────────────────────────
+# Run: docker compose up -d
+# Frontend:  http://localhost:3000   (admin / admin)
+# Backend:   http://localhost:8000/docs
+# Keycloak:  http://localhost:8080   (future IAM integration)
+# N8N:       http://localhost:5678   (future automation engine)
+# ─────────────────────────────────────────────────────────────────────────────
+
+services:
+
+  # ── PostgreSQL ───────────────────────────────────────────────────────────────
+  db:
+    image: postgres:16-alpine
+    container_name: argos-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB:       ${POSTGRES_DB:-argos}
+      POSTGRES_USER:     ${POSTGRES_USER:-argos}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-argos}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./backend/init.sql:/docker-entrypoint-initdb.d/init.sql
+    networks:
+      - db-net
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-argos}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ── Backend — FastAPI ────────────────────────────────────────────────────────
+  backend:
+    build: ./backend
+    container_name: argos-backend
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-argos}:${POSTGRES_PASSWORD:-argos}@db:5432/${POSTGRES_DB:-argos}
+      SECRET_KEY:   ${SECRET_KEY:-changeme_32_chars_secret_key_!!}
+    ports:
+      - "8000:8000"
+    networks:
+      - db-net
+      - frontend-net
+    depends_on:
+      db:
+        condition: service_healthy
+
+  # ── Frontend — Nginx ─────────────────────────────────────────────────────────
+  frontend:
+    build: ./frontend
+    container_name: argos-frontend
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    networks:
+      - frontend-net
+    depends_on:
+      - backend
+
+  # ── Keycloak — IAM (placeholder, future integration) ─────────────────────────
+  keycloak:
+    image: quay.io/keycloak/keycloak:24.0
+    container_name: argos-keycloak
+    restart: unless-stopped
+    command: start-dev
+    environment:
+      KC_DB:                   postgres
+      KC_DB_URL:               jdbc:postgresql://db:5432/${POSTGRES_DB:-argos}
+      KC_DB_USERNAME:          ${POSTGRES_USER:-argos}
+      KC_DB_PASSWORD:          ${POSTGRES_PASSWORD:-argos}
+      KEYCLOAK_ADMIN:          ${KEYCLOAK_ADMIN:-admin}
+      KEYCLOAK_ADMIN_PASSWORD: ${KEYCLOAK_ADMIN_PASSWORD:-admin}
+      KC_HOSTNAME_STRICT:      "false"
+      KC_HTTP_ENABLED:         "true"
+    ports:
+      - "8080:8080"
+    networks:
+      - db-net
+      - auth-net
+    depends_on:
+      db:
+        condition: service_healthy
+
+  # ── N8N — Automation Engine (placeholder, future integration) ────────────────
+  n8n:
+    image: n8nio/n8n:latest
+    container_name: argos-n8n
+    restart: unless-stopped
+    environment:
+      DB_TYPE:                    postgresdb
+      DB_POSTGRESDB_HOST:         db
+      DB_POSTGRESDB_PORT:         5432
+      DB_POSTGRESDB_DATABASE:     ${POSTGRES_DB:-argos}
+      DB_POSTGRESDB_USER:         ${POSTGRES_USER:-argos}
+      DB_POSTGRESDB_PASSWORD:     ${POSTGRES_PASSWORD:-argos}
+      N8N_BASIC_AUTH_ACTIVE:      "true"
+      N8N_BASIC_AUTH_USER:        ${N8N_USER:-admin}
+      N8N_BASIC_AUTH_PASSWORD:    ${N8N_PASSWORD:-admin}
+      N8N_ENCRYPTION_KEY:         ${N8N_ENCRYPTION_KEY:-changeme32charsencryptionkey1234}
+    ports:
+      - "5678:5678"
+    volumes:
+      - n8n_data:/home/node/.n8n
+    networks:
+      - automation-net
+      - db-net
+    depends_on:
+      db:
+        condition: service_healthy
+
+volumes:
+  postgres_data:
+  n8n_data:
+
+networks:
+  frontend-net:
+    driver: bridge
+  auth-net:
+    driver: bridge
+  automation-net:
+    driver: bridge
+  db-net:
+    driver: bridge

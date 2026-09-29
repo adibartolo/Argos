@@ -1,0 +1,42 @@
+version: "3.9"
+
+# ── Argos — Edge Device ───────────────────────────────────────────────────────
+# Run on client device (Raspberry Pi, mini PC, VM).
+#
+# Before starting:
+#   1. Build the discovery task image:
+#      docker build -t argos-discovery ./tasks/nmap
+#   2. Copy .env.example to .env and add your tunnel token
+#   3. docker compose up -d
+# ─────────────────────────────────────────────────────────────────────────────
+
+services:
+
+  # ── Execution agent (Flask async) ──────────────────────────────────────────
+  agent:
+    build: ./agent
+    container_name: argos-agent
+    restart: unless-stopped
+    ports:
+      - "5000:5000"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    networks:
+      - edge-net
+
+  # ── Cloudflare Tunnel ───────────────────────────────────────────────────────
+  tunnel:
+    image: cloudflare/cloudflared:latest
+    container_name: argos-tunnel
+    restart: unless-stopped
+    command: tunnel --no-autoupdate run
+    environment:
+      - TUNNEL_TOKEN=${CLOUDFLARE_TUNNEL_TOKEN}
+    networks:
+      - edge-net
+    depends_on:
+      - agent
+
+networks:
+  edge-net:
+    driver: bridge
